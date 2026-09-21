@@ -44,6 +44,7 @@ import {
   Menu,
   Plus,
   Rocket,
+  RefreshCw,
   Search,
   Settings,
   ShieldCheck,
@@ -1379,6 +1380,7 @@ function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [reprocessingId, setReprocessingId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const load = () =>
     api<{ jobs: Job[] }>("/jobs").then((data) => setJobs(data.jobs));
@@ -1454,9 +1456,30 @@ function JobsPage() {
                     Preparar candidatura <Sparkles size={14} />
                   </button>
                   {job.url && (
-                    <a href={job.url} target="_blank" rel="noreferrer">
-                      Original <ExternalLink size={14} />
-                    </a>
+                    <>
+                      <button
+                        disabled={reprocessingId === job.id}
+                        onClick={async () => {
+                          setReprocessingId(job.id);
+                          try {
+                            await api(`/jobs/${job.id}/reprocess`, { method: "POST" });
+                            await load();
+                          } finally {
+                            setReprocessingId(null);
+                          }
+                        }}
+                      >
+                        {reprocessingId === job.id ? (
+                          <Loader2 className="spin" size={14} />
+                        ) : (
+                          <RefreshCw size={14} />
+                        )}
+                        Reprocessar
+                      </button>
+                      <a href={job.url} target="_blank" rel="noreferrer">
+                        Original <ExternalLink size={14} />
+                      </a>
+                    </>
                   )}
                 </div>
               </div>
@@ -1482,6 +1505,21 @@ function JobsPage() {
   );
 }
 
+type JobImportPreview = {
+  url: string;
+  title: string;
+  company: string;
+  location: string;
+  description: string;
+  requirements: string[];
+  importQuality: {
+    score: number;
+    level: "alta" | "média" | "baixa";
+    source: string;
+    warnings: string[];
+  };
+};
+
 function JobModal({
   onClose,
   onSaved,
@@ -1492,16 +1530,35 @@ function JobModal({
   const [tab, setTab] = useState<"link" | "text">("link");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState<JobImportPreview | null>(null);
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setBusy(true);
     setError("");
     const f = new FormData(event.currentTarget);
     try {
-      if (tab === "link") {
-        await api("/jobs/import", {
+      if (tab === "link" && !preview) {
+        const data = await api<{ preview: JobImportPreview }>("/jobs/import/preview", {
           method: "POST",
           body: JSON.stringify({ url: f.get("url") }),
+        });
+        setPreview(data.preview);
+        setBusy(false);
+        return;
+      }
+
+      if (tab === "link" && preview) {
+        await api("/jobs", {
+          method: "POST",
+          body: JSON.stringify({
+            url: preview.url,
+            title: preview.title,
+            company: preview.company,
+            location: preview.location,
+            description: preview.description,
+            requirements: preview.requirements,
+          }),
         });
       } else {
         await api("/jobs", {
@@ -1524,28 +1581,33 @@ function JobModal({
       setBusy(false);
     }
   };
+
   return (
     <Modal
       title="Adicionar vaga-alvo"
       subtitle="Cada vaga melhora a leitura dos padrões do seu mercado."
       onClose={onClose}
     >
-      <div className="tabs">
-        <button
-          className={tab === "link" ? "active" : ""}
-          onClick={() => setTab("link")}
-        >
-          <Link2 /> Colar link
-        </button>
-        <button
-          className={tab === "text" ? "active" : ""}
-          onClick={() => setTab("text")}
-        >
-          <BriefcaseBusiness /> Colar descrição
-        </button>
-      </div>
+      {!preview && (
+        <div className="tabs">
+          <button
+            type="button"
+            className={tab === "link" ? "active" : ""}
+            onClick={() => setTab("link")}
+          >
+            <Link2 /> Colar link
+          </button>
+          <button
+            type="button"
+            className={tab === "text" ? "active" : ""}
+            onClick={() => setTab("text")}
+          >
+            <BriefcaseBusiness /> Colar descrição
+          </button>
+        </div>
+      )}
       <form className="modal-form" onSubmit={submit}>
-        {tab === "link" ? (
+        {tab === "link" && !preview ? (
           <>
             <label>
               Link da vaga
@@ -1559,10 +1621,74 @@ function JobModal({
             <div className="info-box">
               <Sparkles />
               <p>
-                Vamos buscar cargo, empresa, descrição e competências. Se a
-                página bloquear a leitura, use a opção “Colar descrição”.
+                Primeiro vamos ler a vaga e mostrar uma prévia. Nada é salvo
+                até você revisar cargo, empresa, descrição e competências.
               </p>
             </div>
+          </>
+        ) : tab === "link" && preview ? (
+          <>
+            <div className="info-box">
+              <ShieldCheck />
+              <p>
+                Qualidade da importação: <b>{preview.importQuality.score}/100 · {preview.importQuality.level}</b>
+                {" "}({preview.importQuality.source}). Revise os campos abaixo antes de salvar.
+              </p>
+            </div>
+            {preview.importQuality.warnings.map((warning) => (
+              <div className="form-error" key={warning}>{warning}</div>
+            ))}
+            <div className="form-grid">
+              <label>
+                Cargo
+                <input
+                  value={preview.title}
+                  onChange={(e) => setPreview({ ...preview, title: e.target.value })}
+                  required
+                />
+              </label>
+              <label>
+                Empresa
+                <input
+                  value={preview.company}
+                  onChange={(e) => setPreview({ ...preview, company: e.target.value })}
+                  required
+                />
+              </label>
+              <label className="span-2">
+                Local
+                <input
+                  value={preview.location}
+                  onChange={(e) => setPreview({ ...preview, location: e.target.value })}
+                />
+              </label>
+              <label className="span-2">
+                Competências detectadas
+                <input
+                  value={joinTags(preview.requirements)}
+                  onChange={(e) =>
+                    setPreview({ ...preview, requirements: splitTags(e.target.value) })
+                  }
+                />
+              </label>
+              <label className="span-2">
+                Descrição importada
+                <textarea
+                  rows={12}
+                  value={preview.description}
+                  onChange={(e) => setPreview({ ...preview, description: e.target.value })}
+                  required
+                  minLength={20}
+                />
+              </label>
+            </div>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setPreview(null)}
+            >
+              Ler outro link
+            </button>
           </>
         ) : (
           <div className="form-grid">
@@ -1588,11 +1714,12 @@ function JobModal({
         <button className="btn btn-primary btn-full" disabled={busy}>
           {busy ? (
             <>
-              <Loader2 className="spin" /> Lendo e analisando…
+              <Loader2 className="spin" /> {preview ? "Salvando…" : "Lendo e analisando…"}
             </>
           ) : (
             <>
-              Adicionar à análise <ArrowRight size={17} />
+              {tab === "link" && !preview ? "Analisar link" : "Adicionar à análise"}
+              <ArrowRight size={17} />
             </>
           )}
         </button>

@@ -591,6 +591,18 @@ app.post("/api/jobs", auth, async (req: AuthedRequest, res, next) => {
   }
 });
 
+app.post("/api/jobs/import/preview", auth, async (req: AuthedRequest, res, next) => {
+  try {
+    const { url } = z
+      .object({ url: z.string().url().max(2000) })
+      .parse(req.body);
+    const preview = await parseJobUrl(url);
+    res.json({ preview });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/jobs/import", auth, async (req: AuthedRequest, res, next) => {
   try {
     const { url } = z
@@ -598,7 +610,69 @@ app.post("/api/jobs/import", auth, async (req: AuthedRequest, res, next) => {
       .parse(req.body);
     const parsed = await parseJobUrl(url);
     const job = await saveJob(req.userId!, jobSchema.parse(parsed));
-    res.status(201).json({ job });
+    res.status(201).json({ job, importQuality: parsed.importQuality });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/jobs/:id", auth, async (req: AuthedRequest, res, next) => {
+  try {
+    const input = jobSchema.parse(req.body);
+    const requirements = input.requirements.length
+      ? input.requirements
+      : detectSkills(input.description);
+    const job = await queryOne<JobRow>(
+      `UPDATE jobs SET
+      url=$1,title=$2,company=$3,location=$4,description=$5,requirements=$6
+      WHERE id=$7 AND user_id=$8 RETURNING *`,
+      [
+        input.url,
+        input.title,
+        input.company,
+        input.location,
+        input.description,
+        requirements,
+        req.params.id,
+        req.userId,
+      ],
+    );
+    if (!job) return res.status(404).json({ error: "Vaga não encontrada." });
+    res.json({ job });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/jobs/:id/reprocess", auth, async (req: AuthedRequest, res, next) => {
+  try {
+    const existing = await queryOne<JobRow>(
+      "SELECT * FROM jobs WHERE id=$1 AND user_id=$2",
+      [req.params.id, req.userId],
+    );
+    if (!existing) return res.status(404).json({ error: "Vaga não encontrada." });
+    if (!existing.url) {
+      return res.status(400).json({ error: "Esta vaga não possui link original para reprocessar." });
+    }
+
+    const parsed = await parseJobUrl(existing.url);
+    const input = jobSchema.parse(parsed);
+    const job = await queryOne<JobRow>(
+      `UPDATE jobs SET
+      url=$1,title=$2,company=$3,location=$4,description=$5,requirements=$6
+      WHERE id=$7 AND user_id=$8 RETURNING *`,
+      [
+        input.url,
+        input.title,
+        input.company,
+        input.location,
+        input.description,
+        input.requirements.length ? input.requirements : detectSkills(input.description),
+        req.params.id,
+        req.userId,
+      ],
+    );
+    res.json({ job, importQuality: parsed.importQuality });
   } catch (error) {
     next(error);
   }

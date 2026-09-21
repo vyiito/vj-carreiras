@@ -8,6 +8,16 @@ describe("career analysis", () => {
     ).toEqual(expect.arrayContaining(["React", "TypeScript", "SQL", "Docker"]));
   });
 
+
+  it("does not detect short aliases inside unrelated words", () => {
+    expect(detectSkills("aprender mais")).not.toContain("Machine Learning");
+    expect(detectSkills("HTML")).not.toContain("Machine Learning");
+    expect(detectSkills("Benefits")).not.toContain("TypeScript");
+    expect(detectSkills("javascript and APIs")).toEqual(
+      expect.arrayContaining(["JavaScript", "APIs REST"]),
+    );
+  });
+
   it("prioritizes repeated gaps and calculates match", () => {
     const analysis = analyzeCareer({
       profileSkills: ["React"],
