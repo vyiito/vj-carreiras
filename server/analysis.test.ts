@@ -1,25 +1,66 @@
-import { describe, expect, it } from 'vitest';
-import { analyzeCareer, detectSkills } from './analysis.js';
+import { describe, expect, it } from "vitest";
+import { analyzeCareer, detectSkills } from "./analysis.js";
 
-describe('career analysis', () => {
-  it('detects canonical skills from free text', () => {
-    expect(detectSkills('Trabalhei com React, TypeScript, PostgreSQL e Docker')).toEqual(
-      expect.arrayContaining(['React', 'TypeScript', 'SQL', 'Docker']),
-    );
+describe("career analysis", () => {
+  it("detects canonical skills from free text", () => {
+    expect(
+      detectSkills("Trabalhei com React, TypeScript, PostgreSQL e Docker"),
+    ).toEqual(expect.arrayContaining(["React", "TypeScript", "SQL", "Docker"]));
   });
 
-  it('prioritizes repeated gaps and calculates match', () => {
+  it("prioritizes repeated gaps and calculates match", () => {
     const analysis = analyzeCareer({
-      profileSkills: ['React'],
+      profileSkills: ["React"],
       experiences: [],
       jobs: [
-        { id: '1', title: 'Frontend', company: 'A', description: 'React TypeScript Docker', requirements: [] },
-        { id: '2', title: 'Frontend', company: 'B', description: 'React TypeScript', requirements: [] },
+        {
+          id: "1",
+          title: "Frontend",
+          company: "A",
+          description: "React TypeScript Docker",
+          requirements: [],
+        },
+        {
+          id: "2",
+          title: "Frontend",
+          company: "B",
+          description: "React TypeScript",
+          requirements: [],
+        },
       ],
     });
     expect(analysis.matchScore).toBeGreaterThan(0);
-    expect(analysis.gaps[0].skill).toBe('TypeScript');
-    expect(analysis.gaps[0].priority).toBe('crítica');
+    expect(analysis.gaps[0].skill).toBe("TypeScript");
+    expect(analysis.gaps[0].priority).toBe("crítica");
+  });
+
+  it("classifies required skills and keeps the source excerpt", () => {
+    const analysis = analyzeCareer({
+      profileSkills: [],
+      experiences: [],
+      jobs: [
+        {
+          id: "1",
+          title: "3D Artist",
+          company: "Studio",
+          description:
+            "É obrigatório ter domínio de Blender. Unreal Engine será um diferencial.",
+          requirements: [],
+        },
+      ],
+    });
+    const blender = analysis.signals.find(
+      (signal) => signal.skill === "Blender",
+    );
+    const unreal = analysis.signals.find(
+      (signal) => signal.skill === "Unreal Engine",
+    );
+    expect(blender).toMatchObject({
+      requirementType: "obrigatório",
+      category: "Ferramenta",
+      weight: 5,
+    });
+    expect(blender?.evidenceDetails[0].excerpt).toContain("Blender");
+    expect(unreal?.requirementType).toBe("diferencial");
   });
 });
-

@@ -5,14 +5,19 @@ Planejador de carreira orientado por vagas reais. O produto reúne oportunidades
 ## O que já funciona
 
 - Cadastro, login e sessão segura por cookie HTTP-only
-- Perfil com direção profissional, competências e empresas-alvo
+- Confirmação de e-mail, recuperação de senha, proteção contra tentativas excessivas e cabeçalhos de segurança
+- Perfil com direção profissional, idiomas, links profissionais, competências e empresas-alvo
 - Importação de currículo em PDF, DOCX ou TXT, com revisão antes de preencher o perfil
 - Histórico de experiências usado como evidência
 - Importação de vagas por URL com leitura de `JobPosting` (JSON-LD) e fallback por conteúdo
 - Cadastro manual para páginas que bloqueiam leitura automatizada
 - Extração e normalização de competências
-- Score de aderência, forças, lacunas e evidências por vaga
-- Plano de ação semanal com acompanhamento de progresso
+- Score ponderado de aderência, forças, lacunas, tipo de requisito, dificuldade e evidências por vaga
+- Mapa de carreira com cargo acessível, cargo ponte e objetivo principal
+- Projetos estratégicos de portfólio e biblioteca de evidências
+- Plano de ação semanal e histórico de evolução do Career Readiness
+- Pipeline visual de candidaturas e kit personalizado para cada vaga
+- Exportação dos dados e exclusão segura da conta
 - Interface responsiva em português
 
 ## Desenvolvimento local
@@ -44,6 +49,8 @@ npm run build
 ## Render
 
 O arquivo `render.yaml` provisiona o serviço web e o PostgreSQL. A configuração gratuita é adequada para avaliação; para operação realmente contínua, altere os planos após confirmar os custos atuais no Render.
+
+Para ativar os e-mails transacionais, cadastre `RESEND_API_KEY` no painel do serviço e configure `EMAIL_FROM` com um remetente validado no Resend. Sem essa chave, cadastro e login continuam disponíveis, mas nenhuma mensagem é enviada.
 
 A evolução planejada do Career OS está documentada em [`PRODUCT_ROADMAP.md`](./PRODUCT_ROADMAP.md).
 

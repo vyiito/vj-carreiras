@@ -18,7 +18,7 @@ Transformar as carreiras que uma pessoa deseja em um caminho verificável para c
 - Forças, lacunas, prioridades e evidências
 - Plano semanal e acompanhamento de progresso
 
-## Próximas fases
+## Career OS — recursos entregues
 
 ### 1. Skill Graph e evidências
 
@@ -51,9 +51,21 @@ Transformar as carreiras que uma pessoa deseja em um caminho verificável para c
 ### 5. Career readiness e mentor contextual
 
 - Histórico da evolução do score com explicação das mudanças
-- Assistente que conhece perfil, vagas, projetos, empresas, plano e progresso
-- Recomendações contextuais para tempo disponível, cursos e novos projetos
-- Feed privado de mudanças relevantes no mercado e no roadmap
+- Recomendações de projetos ligadas às lacunas prioritárias
+
+### 6. Operação da carreira
+
+- Pipeline de candidaturas por etapa
+- Kit de candidatura por vaga sem inventar experiências
+- Confirmação de e-mail e recuperação de senha
+- Portabilidade e exclusão dos dados da conta
+
+## Próximas evoluções
+
+- Mentor conversacional que conhece perfil, vagas, projetos, empresas, plano e progresso
+- Feed privado de mudanças relevantes nas vagas e no roadmap
+- Análise histórica das empresas-alvo e alertas de mudança de requisitos
+- Integrações opcionais com GitHub, LinkedIn, calendários e provedores de cursos
 
 ## Princípios do motor de aderência
 

@@ -1,345 +1,761 @@
-import 'dotenv/config';
-import express, { type NextFunction, type Request, type Response } from 'express';
-import cookieParser from 'cookie-parser';
-import multer from 'multer';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import { z } from 'zod';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { analyzeCareer, detectSkills } from './analysis.js';
-import { migrate, pool, queryMany, queryOne } from './db.js';
-import { parseJobUrl } from './jobParser.js';
-import { extractCvText, parseCvText } from './cvParser.js';
+import "dotenv/config";
+import express, {
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
+import cookieParser from "cookie-parser";
+import multer from "multer";
+import helmet from "helmet";
+import { rateLimit } from "express-rate-limit";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { z } from "zod";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createHash, randomBytes } from "node:crypto";
+import { analyzeCareer, detectSkills } from "./analysis.js";
+import { migrate, pool, queryMany, queryOne } from "./db.js";
+import { parseJobUrl } from "./jobParser.js";
+import { extractCvText, parseCvText } from "./cvParser.js";
+import { createFeatureRouter } from "./features.js";
+import {
+  passwordResetEmail,
+  sendTransactionalEmail,
+  verificationEmail,
+} from "./email.js";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const secret = process.env.JWT_SECRET || 'dev-only-secret-change-me';
+const secret = process.env.JWT_SECRET || "dev-only-secret-change-me";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const publicDir = path.resolve(__dirname, '../public');
+const publicDir = path.resolve(__dirname, "../public");
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
 });
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
+app.set("trust proxy", 1);
+app.use(
+  helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: false }),
+);
 
 type AuthedRequest = Request & { userId?: string };
-type UserRow = { id: string; name: string; email: string; password_hash: string };
+type UserRow = {
+  id: string;
+  name: string;
+  email: string;
+  password_hash: string;
+  email_verified: boolean;
+  onboarding_completed: boolean;
+};
 type ProfileRow = {
-  user_id: string; headline: string; location: string; bio: string; target_role: string;
-  target_companies: string[]; skills: string[]; weekly_hours: number;
+  user_id: string;
+  headline: string;
+  location: string;
+  bio: string;
+  target_role: string;
+  target_companies: string[];
+  skills: string[];
+  weekly_hours: number;
 };
 type ExperienceRow = {
-  id: string; role: string; company: string; start_date: string; end_date: string;
-  description: string; skills: string[];
+  id: string;
+  role: string;
+  company: string;
+  start_date: string;
+  end_date: string;
+  description: string;
+  skills: string[];
 };
 type JobRow = {
-  id: string; url: string; title: string; company: string; location: string;
-  description: string; requirements: string[]; status: string; created_at: string;
+  id: string;
+  url: string;
+  title: string;
+  company: string;
+  location: string;
+  description: string;
+  requirements: string[];
+  status: string;
+  created_at: string;
 };
 
 function issueToken(res: Response, userId: string) {
-  const token = jwt.sign({ sub: userId }, secret, { expiresIn: '30d' });
-  res.cookie('vj_session', token, {
+  const token = jwt.sign({ sub: userId }, secret, { expiresIn: "30d" });
+  res.cookie("vj_session", token, {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
     maxAge: 30 * 24 * 60 * 60 * 1000,
   });
 }
 
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 12,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Muitas tentativas. Aguarde alguns minutos." },
+});
+const hashToken = (token: string) =>
+  createHash("sha256").update(token).digest("hex");
+async function createAuthToken(
+  userId: string,
+  type: "verify" | "reset",
+  hours: number,
+) {
+  const token = randomBytes(32).toString("hex");
+  await pool.query(
+    "DELETE FROM auth_tokens WHERE user_id=$1 AND token_type=$2 AND used_at IS NULL",
+    [userId, type],
+  );
+  await pool.query(
+    `INSERT INTO auth_tokens (user_id,token_hash,token_type,expires_at) VALUES ($1,$2,$3,NOW()+($4||' hours')::interval)`,
+    [userId, hashToken(token), type, String(hours)],
+  );
+  return token;
+}
+
 function auth(req: AuthedRequest, res: Response, next: NextFunction) {
   const token = req.cookies.vj_session;
-  if (!token) return res.status(401).json({ error: 'Faça login para continuar.' });
+  if (!token)
+    return res.status(401).json({ error: "Faça login para continuar." });
   try {
     const payload = jwt.verify(token, secret) as { sub: string };
     req.userId = payload.sub;
     next();
   } catch {
-    res.clearCookie('vj_session');
-    return res.status(401).json({ error: 'Sua sessão expirou.' });
+    res.clearCookie("vj_session");
+    return res.status(401).json({ error: "Sua sessão expirou." });
   }
 }
 
 const credentialsSchema = z.object({
   name: z.string().trim().min(2).max(80).optional(),
-  email: z.string().email().transform((value) => value.toLowerCase()),
-  password: z.string().min(6).max(100),
+  email: z
+    .string()
+    .email()
+    .transform((value) => value.toLowerCase()),
+  password: z.string().min(8).max(100),
 });
 
-app.get('/api/health', async (_req, res) => {
+app.get("/api/health", async (_req, res) => {
   try {
-    await pool.query('SELECT 1');
-    res.json({ status: 'ok', database: 'connected' });
+    await pool.query("SELECT 1");
+    res.json({ status: "ok", database: "connected" });
   } catch {
-    res.status(503).json({ status: 'degraded', database: 'unavailable' });
+    res.status(503).json({ status: "degraded", database: "unavailable" });
   }
 });
 
-app.post('/api/auth/register', async (req, res, next) => {
+app.post("/api/auth/register", authLimiter, async (req, res, next) => {
   try {
-    const input = credentialsSchema.extend({ name: z.string().trim().min(2).max(80) }).parse(req.body);
-    const exists = await queryOne('SELECT id FROM users WHERE email = $1', [input.email]);
-    if (exists) return res.status(409).json({ error: 'Esse e-mail já está cadastrado.' });
+    const input = credentialsSchema
+      .extend({ name: z.string().trim().min(2).max(80) })
+      .parse(req.body);
+    const exists = await queryOne("SELECT id FROM users WHERE email = $1", [
+      input.email,
+    ]);
+    if (exists)
+      return res.status(409).json({ error: "Esse e-mail já está cadastrado." });
     const passwordHash = await bcrypt.hash(input.password, 12);
     const user = await queryOne<UserRow>(
-      'INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING *',
+      "INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING *",
       [input.name, input.email, passwordHash],
     );
-    if (!user) throw new Error('Não foi possível criar a conta.');
-    await pool.query('INSERT INTO profiles (user_id) VALUES ($1)', [user.id]);
+    if (!user) throw new Error("Não foi possível criar a conta.");
+    await pool.query("INSERT INTO profiles (user_id) VALUES ($1)", [user.id]);
+    const verificationToken = await createAuthToken(user.id, "verify", 24);
+    const email = verificationEmail(user.name, verificationToken);
+    void sendTransactionalEmail(user.email, email.subject, email.html).catch(
+      console.error,
+    );
     issueToken(res, user.id);
-    res.status(201).json({ user: { id: user.id, name: user.name, email: user.email } });
-  } catch (error) { next(error); }
+    res.status(201).json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        emailVerified: false,
+        onboardingCompleted: false,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.post('/api/auth/login', async (req, res, next) => {
+app.post("/api/auth/login", authLimiter, async (req, res, next) => {
   try {
     const input = credentialsSchema.parse(req.body);
-    const user = await queryOne<UserRow>('SELECT * FROM users WHERE email = $1', [input.email]);
+    const user = await queryOne<UserRow>(
+      "SELECT * FROM users WHERE email = $1",
+      [input.email],
+    );
     if (!user || !(await bcrypt.compare(input.password, user.password_hash))) {
-      return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
+      return res.status(401).json({ error: "E-mail ou senha incorretos." });
     }
     issueToken(res, user.id);
-    res.json({ user: { id: user.id, name: user.name, email: user.email } });
-  } catch (error) { next(error); }
+    res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.email_verified,
+        onboardingCompleted: user.onboarding_completed,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.post('/api/auth/logout', (_req, res) => {
-  res.clearCookie('vj_session');
+app.get("/api/auth/verify-email", async (req, res, next) => {
+  try {
+    const token = z.string().min(20).parse(req.query.token);
+    const record = await queryOne<{ id: string; user_id: string }>(
+      "SELECT id,user_id FROM auth_tokens WHERE token_hash=$1 AND token_type='verify' AND used_at IS NULL AND expires_at>NOW()",
+      [hashToken(token)],
+    );
+    if (!record) return res.redirect("/entrar?verified=invalid");
+    await pool.query("UPDATE users SET email_verified=TRUE WHERE id=$1", [
+      record.user_id,
+    ]);
+    await pool.query("UPDATE auth_tokens SET used_at=NOW() WHERE id=$1", [
+      record.id,
+    ]);
+    res.redirect("/entrar?verified=1");
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post(
+  "/api/auth/resend-verification",
+  authLimiter,
+  auth,
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const user = await queryOne<UserRow>("SELECT * FROM users WHERE id=$1", [
+        req.userId,
+      ]);
+      if (!user)
+        return res.status(404).json({ error: "Usuário não encontrado." });
+      if (user.email_verified)
+        return res.json({ message: "Seu e-mail já está confirmado." });
+      const token = await createAuthToken(user.id, "verify", 24);
+      const email = verificationEmail(user.name, token);
+      const result = await sendTransactionalEmail(
+        user.email,
+        email.subject,
+        email.html,
+      );
+      res.json({
+        message: result.sent
+          ? "Novo link de confirmação enviado."
+          : "O envio de e-mail ainda precisa ser ativado pelo administrador.",
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+app.post("/api/auth/forgot-password", authLimiter, async (req, res, next) => {
+  try {
+    const { email } = z
+      .object({
+        email: z
+          .string()
+          .email()
+          .transform((v) => v.toLowerCase()),
+      })
+      .parse(req.body);
+    const user = await queryOne<UserRow>("SELECT * FROM users WHERE email=$1", [
+      email,
+    ]);
+    if (user) {
+      const token = await createAuthToken(user.id, "reset", 1);
+      const message = passwordResetEmail(user.name, token);
+      void sendTransactionalEmail(
+        user.email,
+        message.subject,
+        message.html,
+      ).catch(console.error);
+    }
+    res.json({
+      message: "Se o e-mail estiver cadastrado, enviaremos as instruções.",
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/auth/reset-password", authLimiter, async (req, res, next) => {
+  try {
+    const { token, password } = z
+      .object({
+        token: z.string().min(20),
+        password: z.string().min(8).max(100),
+      })
+      .parse(req.body);
+    const record = await queryOne<{ id: string; user_id: string }>(
+      "SELECT id,user_id FROM auth_tokens WHERE token_hash=$1 AND token_type='reset' AND used_at IS NULL AND expires_at>NOW()",
+      [hashToken(token)],
+    );
+    if (!record)
+      return res.status(400).json({ error: "Link inválido ou expirado." });
+    const passwordHash = await bcrypt.hash(password, 12);
+    await pool.query("UPDATE users SET password_hash=$1 WHERE id=$2", [
+      passwordHash,
+      record.user_id,
+    ]);
+    await pool.query("UPDATE auth_tokens SET used_at=NOW() WHERE id=$1", [
+      record.id,
+    ]);
+    res.json({ message: "Senha atualizada." });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/auth/logout", (_req, res) => {
+  res.clearCookie("vj_session");
   res.status(204).end();
 });
 
-app.get('/api/me', auth, async (req: AuthedRequest, res, next) => {
+app.get("/api/me", auth, async (req: AuthedRequest, res, next) => {
   try {
-    const user = await queryOne<UserRow>('SELECT * FROM users WHERE id = $1', [req.userId]);
-    if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
-    res.json({ user: { id: user.id, name: user.name, email: user.email } });
-  } catch (error) { next(error); }
+    const user = await queryOne<UserRow>("SELECT * FROM users WHERE id = $1", [
+      req.userId,
+    ]);
+    if (!user)
+      return res.status(404).json({ error: "Usuário não encontrado." });
+    res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.email_verified,
+        onboardingCompleted: user.onboarding_completed,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.get('/api/profile', auth, async (req: AuthedRequest, res, next) => {
+app.get("/api/profile", auth, async (req: AuthedRequest, res, next) => {
   try {
     const [profile, experiences] = await Promise.all([
-      queryOne<ProfileRow>('SELECT * FROM profiles WHERE user_id = $1', [req.userId]),
-      queryMany<ExperienceRow>('SELECT * FROM experiences WHERE user_id = $1 ORDER BY created_at DESC', [req.userId]),
+      queryOne<ProfileRow>("SELECT * FROM profiles WHERE user_id = $1", [
+        req.userId,
+      ]),
+      queryMany<ExperienceRow>(
+        "SELECT * FROM experiences WHERE user_id = $1 ORDER BY created_at DESC",
+        [req.userId],
+      ),
     ]);
     res.json({ profile, experiences });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 });
 
 const profileSchema = z.object({
-  headline: z.string().max(160).default(''),
-  location: z.string().max(100).default(''),
-  bio: z.string().max(1200).default(''),
-  targetRole: z.string().max(160).default(''),
+  headline: z.string().max(160).default(""),
+  location: z.string().max(100).default(""),
+  bio: z.string().max(1200).default(""),
+  targetRole: z.string().max(160).default(""),
   targetCompanies: z.array(z.string().max(100)).max(20).default([]),
   skills: z.array(z.string().max(80)).max(100).default([]),
   weeklyHours: z.number().int().min(1).max(40).default(6),
+  portfolioUrl: z.string().max(2000).default(""),
+  linkedinUrl: z.string().max(2000).default(""),
+  githubUrl: z.string().max(2000).default(""),
+  languages: z.array(z.string().max(80)).max(20).default([]),
 });
 
-app.put('/api/profile', auth, async (req: AuthedRequest, res, next) => {
+app.put("/api/profile", auth, async (req: AuthedRequest, res, next) => {
   try {
     const input = profileSchema.parse(req.body);
-    const profile = await queryOne<ProfileRow>(`UPDATE profiles SET
+    const profile = await queryOne<ProfileRow>(
+      `UPDATE profiles SET
       headline=$1, location=$2, bio=$3, target_role=$4, target_companies=$5,
-      skills=$6, weekly_hours=$7, updated_at=NOW() WHERE user_id=$8 RETURNING *`,
-    [input.headline, input.location, input.bio, input.targetRole, input.targetCompanies, input.skills, input.weeklyHours, req.userId]);
+      skills=$6, weekly_hours=$7, portfolio_url=$8,linkedin_url=$9,github_url=$10,languages=$11,updated_at=NOW() WHERE user_id=$12 RETURNING *`,
+      [
+        input.headline,
+        input.location,
+        input.bio,
+        input.targetRole,
+        input.targetCompanies,
+        input.skills,
+        input.weeklyHours,
+        input.portfolioUrl,
+        input.linkedinUrl,
+        input.githubUrl,
+        input.languages,
+        req.userId,
+      ],
+    );
     res.json({ profile });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 });
 
 const experienceSchema = z.object({
   role: z.string().trim().min(2).max(120),
   company: z.string().trim().min(2).max(120),
-  startDate: z.string().max(20).default(''),
-  endDate: z.string().max(20).default(''),
-  description: z.string().max(3000).default(''),
+  startDate: z.string().max(20).default(""),
+  endDate: z.string().max(20).default(""),
+  description: z.string().max(3000).default(""),
   skills: z.array(z.string().max(80)).max(50).default([]),
 });
 
-app.post('/api/experiences', auth, async (req: AuthedRequest, res, next) => {
+app.post("/api/experiences", auth, async (req: AuthedRequest, res, next) => {
   try {
     const input = experienceSchema.parse(req.body);
-    const experience = await queryOne<ExperienceRow>(`INSERT INTO experiences
+    const experience = await queryOne<ExperienceRow>(
+      `INSERT INTO experiences
       (user_id, role, company, start_date, end_date, description, skills)
       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [req.userId, input.role, input.company, input.startDate, input.endDate, input.description, input.skills]);
+      [
+        req.userId,
+        input.role,
+        input.company,
+        input.startDate,
+        input.endDate,
+        input.description,
+        input.skills,
+      ],
+    );
     res.status(201).json({ experience });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.delete('/api/experiences/:id', auth, async (req: AuthedRequest, res, next) => {
-  try {
-    await pool.query('DELETE FROM experiences WHERE id=$1 AND user_id=$2', [req.params.id, req.userId]);
-    res.status(204).end();
-  } catch (error) { next(error); }
-});
+app.delete(
+  "/api/experiences/:id",
+  auth,
+  async (req: AuthedRequest, res, next) => {
+    try {
+      await pool.query("DELETE FROM experiences WHERE id=$1 AND user_id=$2", [
+        req.params.id,
+        req.userId,
+      ]);
+      res.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
-app.post('/api/cv/parse', auth, upload.single('cv'), async (req: AuthedRequest, res, next) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'Selecione um currículo em PDF, DOCX ou TXT.' });
-    const text = await extractCvText(req.file);
-    if (text.length < 40) return res.status(400).json({ error: 'O arquivo tem pouco texto legível. Tente outro formato.' });
-    res.json({ preview: parseCvText(text) });
-  } catch (error) { next(error); }
-});
+app.post(
+  "/api/cv/parse",
+  auth,
+  upload.single("cv"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      if (!req.file)
+        return res
+          .status(400)
+          .json({ error: "Selecione um currículo em PDF, DOCX ou TXT." });
+      const text = await extractCvText(req.file);
+      if (text.length < 40)
+        return res.status(400).json({
+          error: "O arquivo tem pouco texto legível. Tente outro formato.",
+        });
+      res.json({ preview: parseCvText(text) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 const cvApplySchema = z.object({
-  name: z.string().max(80).default(''),
-  headline: z.string().max(160).default(''),
-  location: z.string().max(100).default(''),
-  bio: z.string().max(1200).default(''),
+  name: z.string().max(80).default(""),
+  headline: z.string().max(160).default(""),
+  location: z.string().max(100).default(""),
+  bio: z.string().max(1200).default(""),
   skills: z.array(z.string().max(80)).max(150).default([]),
   experiences: z.array(experienceSchema).max(12).default([]),
 });
 
-app.post('/api/cv/apply', auth, async (req: AuthedRequest, res, next) => {
+app.post("/api/cv/apply", auth, async (req: AuthedRequest, res, next) => {
   const client = await pool.connect();
   try {
     const input = cvApplySchema.parse(req.body);
-    const current = await queryOne<ProfileRow>('SELECT * FROM profiles WHERE user_id=$1', [req.userId]);
+    const current = await queryOne<ProfileRow>(
+      "SELECT * FROM profiles WHERE user_id=$1",
+      [req.userId],
+    );
     const skills = [...new Set([...(current?.skills ?? []), ...input.skills])];
-    await client.query('BEGIN');
-    if (input.name) await client.query('UPDATE users SET name=$1 WHERE id=$2', [input.name, req.userId]);
-    await client.query(`UPDATE profiles SET
+    await client.query("BEGIN");
+    if (input.name)
+      await client.query("UPDATE users SET name=$1 WHERE id=$2", [
+        input.name,
+        req.userId,
+      ]);
+    await client.query(
+      `UPDATE profiles SET
       headline=COALESCE(NULLIF($1,''),headline), location=COALESCE(NULLIF($2,''),location),
       bio=COALESCE(NULLIF($3,''),bio), skills=$4, updated_at=NOW() WHERE user_id=$5`,
-    [input.headline, input.location, input.bio, skills, req.userId]);
+      [input.headline, input.location, input.bio, skills, req.userId],
+    );
     for (const experience of input.experiences) {
-      await client.query(`INSERT INTO experiences
+      await client.query(
+        `INSERT INTO experiences
         (user_id,role,company,start_date,end_date,description,skills)
         SELECT $1,$2,$3,$4,$5,$6,$7
         WHERE NOT EXISTS (
           SELECT 1 FROM experiences
           WHERE user_id=$1 AND LOWER(role)=LOWER($2) AND LOWER(company)=LOWER($3) AND start_date=$4
         )`,
-      [req.userId, experience.role, experience.company, experience.startDate, experience.endDate, experience.description, experience.skills]);
+        [
+          req.userId,
+          experience.role,
+          experience.company,
+          experience.startDate,
+          experience.endDate,
+          experience.description,
+          experience.skills,
+        ],
+      );
     }
-    await client.query('COMMIT');
-    res.json({ imported: { skills: input.skills.length, experiences: input.experiences.length } });
+    await client.query("COMMIT");
+    res.json({
+      imported: {
+        skills: input.skills.length,
+        experiences: input.experiences.length,
+      },
+    });
   } catch (error) {
-    await client.query('ROLLBACK'); next(error);
-  } finally { client.release(); }
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
 });
 
 const jobSchema = z.object({
-  url: z.string().max(2000).default(''),
+  url: z.string().max(2000).default(""),
   title: z.string().trim().min(2).max(180),
   company: z.string().trim().min(2).max(120),
-  location: z.string().max(120).default(''),
+  location: z.string().max(120).default(""),
   description: z.string().min(20).max(25000),
   requirements: z.array(z.string().max(100)).max(100).default([]),
 });
 
 async function saveJob(userId: string, input: z.infer<typeof jobSchema>) {
-  const requirements = input.requirements.length ? input.requirements : detectSkills(input.description);
-  return queryOne<JobRow>(`INSERT INTO jobs
+  const requirements = input.requirements.length
+    ? input.requirements
+    : detectSkills(input.description);
+  return queryOne<JobRow>(
+    `INSERT INTO jobs
     (user_id,url,title,company,location,description,requirements)
     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-  [userId, input.url, input.title, input.company, input.location, input.description, requirements]);
+    [
+      userId,
+      input.url,
+      input.title,
+      input.company,
+      input.location,
+      input.description,
+      requirements,
+    ],
+  );
 }
 
-app.get('/api/jobs', auth, async (req: AuthedRequest, res, next) => {
+app.get("/api/jobs", auth, async (req: AuthedRequest, res, next) => {
   try {
-    const jobs = await queryMany<JobRow>('SELECT * FROM jobs WHERE user_id=$1 ORDER BY created_at DESC', [req.userId]);
+    const jobs = await queryMany<JobRow>(
+      "SELECT * FROM jobs WHERE user_id=$1 ORDER BY created_at DESC",
+      [req.userId],
+    );
     res.json({ jobs });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.post('/api/jobs', auth, async (req: AuthedRequest, res, next) => {
+app.post("/api/jobs", auth, async (req: AuthedRequest, res, next) => {
   try {
     const job = await saveJob(req.userId!, jobSchema.parse(req.body));
     res.status(201).json({ job });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.post('/api/jobs/import', auth, async (req: AuthedRequest, res, next) => {
+app.post("/api/jobs/import", auth, async (req: AuthedRequest, res, next) => {
   try {
-    const { url } = z.object({ url: z.string().url().max(2000) }).parse(req.body);
+    const { url } = z
+      .object({ url: z.string().url().max(2000) })
+      .parse(req.body);
     const parsed = await parseJobUrl(url);
     const job = await saveJob(req.userId!, jobSchema.parse(parsed));
     res.status(201).json({ job });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.delete('/api/jobs/:id', auth, async (req: AuthedRequest, res, next) => {
+app.delete("/api/jobs/:id", auth, async (req: AuthedRequest, res, next) => {
   try {
-    await pool.query('DELETE FROM jobs WHERE id=$1 AND user_id=$2', [req.params.id, req.userId]);
+    await pool.query("DELETE FROM jobs WHERE id=$1 AND user_id=$2", [
+      req.params.id,
+      req.userId,
+    ]);
     res.status(204).end();
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 });
 
 async function buildAnalysis(userId: string) {
   const [profile, experiences, jobs] = await Promise.all([
-    queryOne<ProfileRow>('SELECT * FROM profiles WHERE user_id=$1', [userId]),
-    queryMany<ExperienceRow>('SELECT * FROM experiences WHERE user_id=$1', [userId]),
-    queryMany<JobRow>('SELECT * FROM jobs WHERE user_id=$1', [userId]),
+    queryOne<ProfileRow>("SELECT * FROM profiles WHERE user_id=$1", [userId]),
+    queryMany<ExperienceRow>("SELECT * FROM experiences WHERE user_id=$1", [
+      userId,
+    ]),
+    queryMany<JobRow>("SELECT * FROM jobs WHERE user_id=$1", [userId]),
   ]);
   return analyzeCareer({
     profileSkills: profile?.skills ?? [],
-    experiences: experiences.map((item) => ({ role: item.role, company: item.company, description: item.description, skills: item.skills })),
-    jobs: jobs.map((item) => ({ id: item.id, title: item.title, company: item.company, description: item.description, requirements: item.requirements })),
+    experiences: experiences.map((item) => ({
+      role: item.role,
+      company: item.company,
+      description: item.description,
+      skills: item.skills,
+    })),
+    jobs: jobs.map((item) => ({
+      id: item.id,
+      title: item.title,
+      company: item.company,
+      description: item.description,
+      requirements: item.requirements,
+    })),
     weeklyHours: profile?.weekly_hours ?? 6,
   });
 }
 
-app.get('/api/analysis', auth, async (req: AuthedRequest, res, next) => {
-  try { res.json({ analysis: await buildAnalysis(req.userId!) }); }
-  catch (error) { next(error); }
+app.get("/api/analysis", auth, async (req: AuthedRequest, res, next) => {
+  try {
+    res.json({ analysis: await buildAnalysis(req.userId!) });
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.post('/api/plan/generate', auth, async (req: AuthedRequest, res, next) => {
+app.post("/api/plan/generate", auth, async (req: AuthedRequest, res, next) => {
   const client = await pool.connect();
   try {
     const analysis = await buildAnalysis(req.userId!);
-    await client.query('BEGIN');
-    await client.query('DELETE FROM plan_items WHERE user_id=$1', [req.userId]);
+    await client.query("BEGIN");
+    await client.query("DELETE FROM plan_items WHERE user_id=$1", [req.userId]);
     for (const item of analysis.plan) {
-      await client.query(`INSERT INTO plan_items (user_id,title,skill,week,hours,outcome)
-        VALUES ($1,$2,$3,$4,$5,$6)`, [req.userId, item.title, item.skill, item.week, item.hours, item.outcome]);
+      await client.query(
+        `INSERT INTO plan_items (user_id,title,skill,week,hours,outcome)
+        VALUES ($1,$2,$3,$4,$5,$6)`,
+        [
+          req.userId,
+          item.title,
+          item.skill,
+          item.week,
+          item.hours,
+          item.outcome,
+        ],
+      );
     }
-    await client.query('COMMIT');
-    const plan = await queryMany('SELECT * FROM plan_items WHERE user_id=$1 ORDER BY week', [req.userId]);
+    await client.query(
+      `INSERT INTO analysis_snapshots (user_id,score,reason)
+       SELECT $1,$2,$3
+       WHERE NOT EXISTS (
+         SELECT 1 FROM analysis_snapshots
+         WHERE user_id=$1 AND score=$2 AND created_at > NOW()-INTERVAL '1 day'
+       )`,
+      [req.userId, analysis.matchScore, analysis.summary],
+    );
+    await client.query("COMMIT");
+    const plan = await queryMany(
+      "SELECT * FROM plan_items WHERE user_id=$1 ORDER BY week",
+      [req.userId],
+    );
     res.json({ plan });
   } catch (error) {
-    await client.query('ROLLBACK'); next(error);
-  } finally { client.release(); }
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
 });
 
-app.get('/api/plan', auth, async (req: AuthedRequest, res, next) => {
+app.get("/api/plan", auth, async (req: AuthedRequest, res, next) => {
   try {
-    const plan = await queryMany('SELECT * FROM plan_items WHERE user_id=$1 ORDER BY week', [req.userId]);
+    const plan = await queryMany(
+      "SELECT * FROM plan_items WHERE user_id=$1 ORDER BY week",
+      [req.userId],
+    );
     res.json({ plan });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.patch('/api/plan/:id', auth, async (req: AuthedRequest, res, next) => {
+app.patch("/api/plan/:id", auth, async (req: AuthedRequest, res, next) => {
   try {
     const { completed } = z.object({ completed: z.boolean() }).parse(req.body);
-    const item = await queryOne('UPDATE plan_items SET completed=$1 WHERE id=$2 AND user_id=$3 RETURNING *', [completed, req.params.id, req.userId]);
+    const item = await queryOne(
+      "UPDATE plan_items SET completed=$1 WHERE id=$2 AND user_id=$3 RETURNING *",
+      [completed, req.params.id, req.userId],
+    );
     res.json({ item });
-  } catch (error) { next(error); }
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.use('/api', (_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }));
+app.use("/api", createFeatureRouter(auth));
+
+app.use("/api", (_req, res) =>
+  res.status(404).json({ error: "Rota não encontrada." }),
+);
 
 app.use(express.static(publicDir));
 app.use((req, res, next) => {
-  if (req.method === 'GET' && req.accepts('html')) return res.sendFile(path.join(publicDir, 'index.html'));
+  if (req.method === "GET" && req.accepts("html"))
+    return res.sendFile(path.join(publicDir, "index.html"));
   next();
 });
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   console.error(error);
-  if (error instanceof multer.MulterError) return res.status(400).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'O currículo deve ter no máximo 8 MB.' : 'Não foi possível receber o arquivo.' });
-  if (error instanceof z.ZodError) return res.status(400).json({ error: 'Revise os campos enviados.', details: error.issues });
-  const message = error instanceof Error ? error.message : 'Erro inesperado.';
+  if (error instanceof multer.MulterError)
+    return res.status(400).json({
+      error:
+        error.code === "LIMIT_FILE_SIZE"
+          ? "O currículo deve ter no máximo 8 MB."
+          : "Não foi possível receber o arquivo.",
+    });
+  if (error instanceof z.ZodError)
+    return res
+      .status(400)
+      .json({ error: "Revise os campos enviados.", details: error.issues });
+  const message = error instanceof Error ? error.message : "Erro inesperado.";
   res.status(500).json({ error: message });
 });
 
 migrate()
-  .then(() => app.listen(port, '0.0.0.0', () => console.log(`VJ Carreiras disponível na porta ${port}`)))
-  .catch((error) => { console.error('Falha ao preparar o banco:', error); process.exit(1); });
+  .then(() =>
+    app.listen(port, "0.0.0.0", () =>
+      console.log(`VJ Carreiras disponível na porta ${port}`),
+    ),
+  )
+  .catch((error) => {
+    console.error("Falha ao preparar o banco:", error);
+    process.exit(1);
+  });
