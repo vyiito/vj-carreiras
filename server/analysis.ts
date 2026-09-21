@@ -92,13 +92,7 @@ const normalize = (value: string) =>
     .toLowerCase();
 
 const escapeRegExp = (value: string) =>
-  value.replace(/[.*+?^$(){}|[\]\\]/g, "\\const normalize = (value: string) =>
-  value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-");
-
+  value.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
 function aliasRegex(alias: string) {
   const normalizedAlias = normalize(alias).trim();
   return new RegExp(
