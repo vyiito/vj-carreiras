@@ -45,6 +45,8 @@ npm run build
 
 O arquivo `render.yaml` provisiona o serviço web e o PostgreSQL. A configuração gratuita é adequada para avaliação; para operação realmente contínua, altere os planos após confirmar os custos atuais no Render.
 
+A evolução planejada do Career OS está documentada em [`PRODUCT_ROADMAP.md`](./PRODUCT_ROADMAP.md).
+
 Use o Blueprint em:
 
 ```text
