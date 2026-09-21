@@ -91,6 +91,38 @@ const normalize = (value: string) =>
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
 
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^$(){}|[\]\\]/g, "\\const normalize = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+");
+
+function aliasRegex(alias: string) {
+  const normalizedAlias = normalize(alias).trim();
+  return new RegExp(
+    `(?:^|[^\\p{L}\\p{N}])${escapeRegExp(normalizedAlias)}(?=$|[^\\p{L}\\p{N}])`,
+    "iu",
+  );
+}
+
+function hasAlias(text: string, alias: string) {
+  return aliasRegex(alias).test(normalize(text));
+}
+
+function aliasIndex(text: string, aliases: string[]) {
+  const normalizedText = normalize(text);
+  for (const alias of aliases) {
+    const match = aliasRegex(alias).exec(normalizedText);
+    if (match?.index !== undefined) {
+      const leadingBoundary = match[0].length - normalize(alias).length;
+      return Math.max(0, match.index + leadingBoundary);
+    }
+  }
+  return -1;
+}
+
 const toolSkills = new Set([
   "Figma",
   "Blender",
@@ -121,15 +153,10 @@ function categoryFor(skill: string): SkillSignal["category"] {
 
 function excerptFor(text: string, skill: string) {
   const aliases = SKILL_ALIASES[skill] ?? [skill];
-  const lowered = normalize(text);
-  const alias = aliases.find((item) => lowered.includes(normalize(item)));
-  if (!alias) return text.slice(0, 170);
-  const index = lowered.indexOf(normalize(alias));
+  const index = aliasIndex(text, aliases);
+  if (index < 0) return text.slice(0, 170);
   return text
-    .slice(
-      Math.max(0, index - 70),
-      Math.min(text.length, index + alias.length + 100),
-    )
+    .slice(Math.max(0, index - 70), Math.min(text.length, index + 180))
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -140,10 +167,8 @@ function requirementTypeFor(
 ): SkillSignal["requirementType"] {
   const normalized = normalize(text);
   const aliases = SKILL_ALIASES[skill] ?? [skill];
-  const skillIndex = Math.max(
-    0,
-    ...aliases.map((alias) => normalized.indexOf(normalize(alias))),
-  );
+  const foundIndex = aliasIndex(text, aliases);
+  const skillIndex = foundIndex >= 0 ? foundIndex : 0;
   const closestMarker = (
     pattern: RegExp,
   ): { type: SkillSignal["requirementType"]; distance: number } | null => {
@@ -190,11 +215,8 @@ function difficultyFor(skill: string): SkillSignal["difficulty"] {
 }
 
 export function detectSkills(text: string): string[] {
-  const haystack = normalize(text);
   return Object.entries(SKILL_ALIASES)
-    .filter(([, aliases]) =>
-      aliases.some((alias) => haystack.includes(normalize(alias))),
-    )
+    .filter(([, aliases]) => aliases.some((alias) => hasAlias(text, alias)))
     .map(([skill]) => skill);
 }
 
