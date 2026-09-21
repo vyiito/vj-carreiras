@@ -281,7 +281,11 @@ function pickDescription($: cheerio.CheerioAPI, posting?: Record<string, unknown
   if (posting?.description) {
     const description = textFromHtml(String(posting.description)).slice(0, 25000);
     if (description.length >= 80) {
-      candidates.push({ description, text: description, score: 40000 + description.length, source: 'JobPosting' } as DescriptionCandidate & { description: string });
+      candidates.push({
+        text: description,
+        score: 40000 + description.length,
+        source: 'JobPosting',
+      });
     }
   }
 
