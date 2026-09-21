@@ -50,7 +50,7 @@ npm run build
 
 O arquivo `render.yaml` provisiona o serviço web e o PostgreSQL. A configuração gratuita é adequada para avaliação; para operação realmente contínua, altere os planos após confirmar os custos atuais no Render.
 
-Para ativar os e-mails transacionais, cadastre `RESEND_API_KEY` no painel do serviço e configure `EMAIL_FROM` com um remetente validado no Resend. Sem essa chave, cadastro e login continuam disponíveis, mas nenhuma mensagem é enviada.
+Para ativar os e-mails transacionais pelo Gmail, habilite a verificação em duas etapas na conta do remetente, gere uma senha de app e cadastre `GMAIL_USER` e `GMAIL_APP_PASSWORD` no painel do serviço. Nunca use a senha normal da conta. Sem essas variáveis, cadastro e login continuam disponíveis, mas nenhuma mensagem é enviada.
 
 A evolução planejada do Career OS está documentada em [`PRODUCT_ROADMAP.md`](./PRODUCT_ROADMAP.md).
 

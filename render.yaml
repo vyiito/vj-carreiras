@@ -19,10 +19,10 @@ services:
         generateValue: true
       - key: APP_URL
         value: https://vj-carreiras.onrender.com
-      - key: RESEND_API_KEY
+      - key: GMAIL_USER
         sync: false
-      - key: EMAIL_FROM
-        value: VJ Carreiras <onboarding@resend.dev>
+      - key: GMAIL_APP_PASSWORD
+        sync: false
 
 databases:
   - name: vj-carreiras-db

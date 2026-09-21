@@ -1,3 +1,5 @@
+import nodemailer from "nodemailer";
+
 const appUrl = () =>
   process.env.APP_URL ||
   process.env.RENDER_EXTERNAL_URL ||
@@ -21,25 +23,27 @@ export async function sendTransactionalEmail(
   subject: string,
   html: string,
 ) {
-  if (!process.env.RESEND_API_KEY) {
+  const user = process.env.GMAIL_USER?.trim();
+  const password = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, "");
+  if (!user || !password) {
     console.info(`[email-disabled] ${subject} -> ${to}`);
     return { sent: false };
   }
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      "Content-Type": "application/json",
+  const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    auth: {
+      user,
+      pass: password,
     },
-    body: JSON.stringify({
-      from: process.env.EMAIL_FROM || "VJ Carreiras <onboarding@resend.dev>",
-      to: [to],
-      subject,
-      html,
-    }),
   });
-  if (!response.ok)
-    throw new Error(`Falha ao enviar e-mail (${response.status}).`);
+  await transporter.sendMail({
+    from: `VJ Carreiras <${user}>`,
+    to,
+    subject,
+    html,
+  });
   return { sent: true };
 }
 
