@@ -373,7 +373,7 @@ export async function parseJobUrl(rawUrl: string) {
   }
 
   let posting: Record<string, unknown> | undefined;
-  let $ = cheerio.load(html || '<html></html>');
+  const $ = cheerio.load(html || '<html></html>');
 
   if (html) {
     $('script[type="application/ld+json"]').each((_, element) => {
@@ -433,7 +433,7 @@ export async function parseJobUrl(rawUrl: string) {
   }
 
   if (!title) {
-    title = clean(new URL(url).pathname.split('/').filter(Boolean).pop()?.replace(/[-_]+/g, ' ') || 'Vaga importada');
+    title = clean(url.pathname.split('/').filter(Boolean).pop()?.replace(/[-_]+/g, ' ') || 'Vaga importada');
   }
 
   if (picked.description.length < 20) {
