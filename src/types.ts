@@ -60,3 +60,19 @@ export type PlanItem = {
   completed: boolean;
 };
 
+export type CvPreview = {
+  name: string;
+  headline: string;
+  location: string;
+  bio: string;
+  skills: string[];
+  experiences: Array<{
+    role: string;
+    company: string;
+    startDate: string;
+    endDate: string;
+    description: string;
+    skills: string[];
+  }>;
+  sourceText: string;
+};

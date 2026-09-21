@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cookieParser from 'cookie-parser';
+import multer from 'multer';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
@@ -9,12 +10,17 @@ import { fileURLToPath } from 'node:url';
 import { analyzeCareer, detectSkills } from './analysis.js';
 import { migrate, pool, queryMany, queryOne } from './db.js';
 import { parseJobUrl } from './jobParser.js';
+import { extractCvText, parseCvText } from './cvParser.js';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const secret = process.env.JWT_SECRET || 'dev-only-secret-change-me';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '../public');
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+});
 
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
@@ -172,6 +178,53 @@ app.delete('/api/experiences/:id', auth, async (req: AuthedRequest, res, next) =
   } catch (error) { next(error); }
 });
 
+app.post('/api/cv/parse', auth, upload.single('cv'), async (req: AuthedRequest, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Selecione um currículo em PDF, DOCX ou TXT.' });
+    const text = await extractCvText(req.file);
+    if (text.length < 40) return res.status(400).json({ error: 'O arquivo tem pouco texto legível. Tente outro formato.' });
+    res.json({ preview: parseCvText(text) });
+  } catch (error) { next(error); }
+});
+
+const cvApplySchema = z.object({
+  name: z.string().max(80).default(''),
+  headline: z.string().max(160).default(''),
+  location: z.string().max(100).default(''),
+  bio: z.string().max(1200).default(''),
+  skills: z.array(z.string().max(80)).max(150).default([]),
+  experiences: z.array(experienceSchema).max(12).default([]),
+});
+
+app.post('/api/cv/apply', auth, async (req: AuthedRequest, res, next) => {
+  const client = await pool.connect();
+  try {
+    const input = cvApplySchema.parse(req.body);
+    const current = await queryOne<ProfileRow>('SELECT * FROM profiles WHERE user_id=$1', [req.userId]);
+    const skills = [...new Set([...(current?.skills ?? []), ...input.skills])];
+    await client.query('BEGIN');
+    if (input.name) await client.query('UPDATE users SET name=$1 WHERE id=$2', [input.name, req.userId]);
+    await client.query(`UPDATE profiles SET
+      headline=COALESCE(NULLIF($1,''),headline), location=COALESCE(NULLIF($2,''),location),
+      bio=COALESCE(NULLIF($3,''),bio), skills=$4, updated_at=NOW() WHERE user_id=$5`,
+    [input.headline, input.location, input.bio, skills, req.userId]);
+    for (const experience of input.experiences) {
+      await client.query(`INSERT INTO experiences
+        (user_id,role,company,start_date,end_date,description,skills)
+        SELECT $1,$2,$3,$4,$5,$6,$7
+        WHERE NOT EXISTS (
+          SELECT 1 FROM experiences
+          WHERE user_id=$1 AND LOWER(role)=LOWER($2) AND LOWER(company)=LOWER($3) AND start_date=$4
+        )`,
+      [req.userId, experience.role, experience.company, experience.startDate, experience.endDate, experience.description, experience.skills]);
+    }
+    await client.query('COMMIT');
+    res.json({ imported: { skills: input.skills.length, experiences: input.experiences.length } });
+  } catch (error) {
+    await client.query('ROLLBACK'); next(error);
+  } finally { client.release(); }
+});
+
 const jobSchema = z.object({
   url: z.string().max(2000).default(''),
   title: z.string().trim().min(2).max(180),
@@ -278,6 +331,7 @@ app.get('*', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   console.error(error);
+  if (error instanceof multer.MulterError) return res.status(400).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'O currículo deve ter no máximo 8 MB.' : 'Não foi possível receber o arquivo.' });
   if (error instanceof z.ZodError) return res.status(400).json({ error: 'Revise os campos enviados.', details: error.issues });
   const message = error instanceof Error ? error.message : 'Erro inesperado.';
   res.status(500).json({ error: message });
@@ -286,4 +340,3 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
 migrate()
   .then(() => app.listen(port, '0.0.0.0', () => console.log(`VJ Carreiras disponível na porta ${port}`)))
   .catch((error) => { console.error('Falha ao preparar o banco:', error); process.exit(1); });
-

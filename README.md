@@ -6,6 +6,7 @@ Planejador de carreira orientado por vagas reais. O produto reúne oportunidades
 
 - Cadastro, login e sessão segura por cookie HTTP-only
 - Perfil com direção profissional, competências e empresas-alvo
+- Importação de currículo em PDF, DOCX ou TXT, com revisão antes de preencher o perfil
 - Histórico de experiências usado como evidência
 - Importação de vagas por URL com leitura de `JobPosting` (JSON-LD) e fallback por conteúdo
 - Cadastro manual para páginas que bloqueiam leitura automatizada

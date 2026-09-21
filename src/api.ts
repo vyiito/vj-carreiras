@@ -1,7 +1,8 @@
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const isFormData = options.body instanceof FormData;
   const response = await fetch(`/api${path}`, {
     ...options,
-    headers: {
+    headers: isFormData ? options.headers : {
       'Content-Type': 'application/json',
       ...options.headers,
     },
@@ -18,4 +19,3 @@ export const splitTags = (value: string) => value
   .filter(Boolean);
 
 export const joinTags = (value: string[] | undefined) => (value ?? []).join(', ');
-

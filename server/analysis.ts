@@ -39,6 +39,23 @@ const SKILL_ALIASES: Record<string, string[]> = {
   'Machine Learning': ['machine learning', 'ml', 'inteligência artificial', 'ai'],
   'Figma': ['figma', 'prototipação', 'prototyping'],
   'UX Research': ['ux research', 'pesquisa com usuários', 'user research'],
+  'Blender': ['blender'],
+  'Maya': ['autodesk maya', 'maya'],
+  'Substance Painter': ['substance painter', 'adobe substance 3d painter'],
+  'ZBrush': ['zbrush'],
+  'Unreal Engine': ['unreal engine', 'unreal 5', 'ue5', 'ue4'],
+  'Unity': ['unity 3d', 'unity3d', 'unity engine'],
+  'Houdini': ['houdini', 'sidefx'],
+  'Hard Surface': ['hard surface', 'hard-surface'],
+  'UV Mapping': ['uv mapping', 'uv unwrapping', 'unwrap', 'mapeamento uv'],
+  'PBR': ['pbr', 'physically based rendering'],
+  'LOD': ['lod', 'level of detail'],
+  'Topology': ['topology', 'retopology', 'retopo', 'topologia'],
+  'Baking': ['texture baking', 'normal baking', 'baking', 'bake de textura'],
+  'Photoshop': ['photoshop', 'adobe photoshop'],
+  'C++': ['c++', 'cpp'],
+  'Portfólio': ['portfolio', 'portfólio', 'artstation'],
+  'Inglês': ['inglês', 'english', 'fluent english'],
 };
 
 const normalize = (value: string) => value
@@ -116,4 +133,3 @@ export function analyzeCareer(input: AnalysisInput) {
       : 'Adicione vagas-alvo para gerar sua análise comparativa.',
   };
 }
-

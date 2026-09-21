@@ -3,10 +3,10 @@ import { Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } fr
 import {
   ArrowRight, BarChart3, BookOpenCheck, BriefcaseBusiness, Building2, Check, CheckCircle2,
   ChevronRight, CircleUserRound, Clock3, Compass, ExternalLink, GraduationCap, LayoutDashboard,
-  Link2, Loader2, LogOut, Menu, Plus, Rocket, Search, ShieldCheck, Sparkles, Target, Trash2, X,
+  FileText, Link2, Loader2, LogOut, Menu, Plus, Rocket, Search, ShieldCheck, Sparkles, Target, Trash2, UploadCloud, X,
 } from 'lucide-react';
 import { api, joinTags, splitTags } from './api';
-import type { Analysis, Experience, Job, PlanItem, Profile, User } from './types';
+import type { Analysis, CvPreview, Experience, Job, PlanItem, Profile, User } from './types';
 
 type AuthValue = { user: User | null; loading: boolean; refresh: () => Promise<void>; logout: () => Promise<void> };
 const AuthContext = createContext<AuthValue | null>(null);
@@ -165,17 +165,74 @@ function EmptyStart() {
 }
 
 function ProfilePage() {
+  const { refresh } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [experiences, setExperiences] = useState<Experience[]>([]);
   const [message, setMessage] = useState('');
   const [showExperience, setShowExperience] = useState(false);
+  const [showCvImport, setShowCvImport] = useState(false);
   const load = () => api<{ profile: Profile; experiences: Experience[] }>('/profile').then((data) => { setProfile(data.profile); setExperiences(data.experiences); });
   useEffect(() => { void load(); }, []);
   if (!profile) return <PageLoader />;
   const save = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const f = new FormData(event.currentTarget); await api('/profile', { method: 'PUT', body: JSON.stringify({ headline: f.get('headline'), location: f.get('location'), bio: f.get('bio'), targetRole: f.get('targetRole'), targetCompanies: splitTags(String(f.get('targetCompanies'))), skills: splitTags(String(f.get('skills'))), weeklyHours: Number(f.get('weeklyHours')) }) }); setMessage('Perfil salvo. Sua análise já foi atualizada.'); setTimeout(() => setMessage(''), 3000); void load(); };
-  return <main className="page"><PageHeader eyebrow="MEU PERFIL" title="Sua história profissional" description="Quanto mais contexto você trouxer, mais precisa será a comparação." /><form className="profile-grid" onSubmit={save}><section className="panel form-panel"><div className="panel-title"><CircleUserRound /><div><h2>Direção profissional</h2><p>Onde você está e onde quer chegar.</p></div></div><div className="form-grid"><label className="span-2">Título profissional<input name="headline" defaultValue={profile.headline} placeholder="Ex.: Product Designer Pleno" /></label><label>Cidade / região<input name="location" defaultValue={profile.location} placeholder="São Paulo, SP" /></label><label>Cargo-alvo<input name="targetRole" defaultValue={profile.target_role} placeholder="Ex.: Product Manager Sênior" /></label><label className="span-2">Resumo profissional<textarea name="bio" defaultValue={profile.bio} placeholder="Conte sobre sua trajetória, resultados e o tipo de problema que gosta de resolver." rows={5} /></label><label className="span-2">Empresas-alvo <small>separe por vírgulas</small><input name="targetCompanies" defaultValue={joinTags(profile.target_companies)} placeholder="Nubank, iFood, Mercado Livre" /></label><label className="span-2">Competências <small>separe por vírgulas</small><input name="skills" defaultValue={joinTags(profile.skills)} placeholder="React, TypeScript, Liderança, SQL" /></label><label>Horas disponíveis por semana<input name="weeklyHours" type="number" min="1" max="40" defaultValue={profile.weekly_hours} /></label></div><div className="form-actions">{message && <span className="success-message"><CheckCircle2 /> {message}</span>}<button className="btn btn-primary">Salvar perfil</button></div></section></form>
+  return <main className="page"><PageHeader eyebrow="MEU PERFIL" title="Sua história profissional" description="Quanto mais contexto você trouxer, mais precisa será a comparação." action={<button className="btn btn-dark" onClick={() => setShowCvImport(true)}><UploadCloud size={17} /> Importar currículo</button>} /><form className="profile-grid" onSubmit={save}><section className="panel form-panel"><div className="panel-title"><CircleUserRound /><div><h2>Direção profissional</h2><p>Onde você está e onde quer chegar.</p></div></div><div className="form-grid"><label className="span-2">Título profissional<input name="headline" defaultValue={profile.headline} placeholder="Ex.: Product Designer Pleno" /></label><label>Cidade / região<input name="location" defaultValue={profile.location} placeholder="São Paulo, SP" /></label><label>Cargo-alvo<input name="targetRole" defaultValue={profile.target_role} placeholder="Ex.: Product Manager Sênior" /></label><label className="span-2">Resumo profissional<textarea name="bio" defaultValue={profile.bio} placeholder="Conte sobre sua trajetória, resultados e o tipo de problema que gosta de resolver." rows={5} /></label><label className="span-2">Empresas-alvo <small>separe por vírgulas</small><input name="targetCompanies" defaultValue={joinTags(profile.target_companies)} placeholder="Nubank, iFood, Mercado Livre" /></label><label className="span-2">Competências <small>separe por vírgulas</small><input name="skills" defaultValue={joinTags(profile.skills)} placeholder="React, TypeScript, Liderança, SQL" /></label><label>Horas disponíveis por semana<input name="weeklyHours" type="number" min="1" max="40" defaultValue={profile.weekly_hours} /></label></div><div className="form-actions">{message && <span className="success-message"><CheckCircle2 /> {message}</span>}<button className="btn btn-primary">Salvar perfil</button></div></section></form>
     <section className="panel experience-panel"><div className="panel-head"><div><span>EXPERIÊNCIA</span><h2>Sua base de evidências</h2></div><button className="btn btn-outline" onClick={() => setShowExperience(true)}><Plus size={16} /> Adicionar experiência</button></div>{experiences.length ? <div className="experience-list">{experiences.map((experience) => <div className="experience-item" key={experience.id}><span className="company-avatar">{experience.company.slice(0,1)}</span><div><h3>{experience.role}</h3><b>{experience.company}</b><small>{experience.start_date} — {experience.end_date || 'Atual'}</small><p>{experience.description}</p><div className="tag-list">{experience.skills.map((skill) => <span key={skill}>{skill}</span>)}</div></div><button className="icon-button danger" onClick={async () => { await api(`/experiences/${experience.id}`, { method: 'DELETE' }); void load(); }}><Trash2 size={17} /></button></div>)}</div> : <div className="inline-empty">Adicione suas experiências para provar o que você já sabe fazer.</div>}</section>
-    {showExperience && <ExperienceModal onClose={() => setShowExperience(false)} onSaved={() => { setShowExperience(false); void load(); }} />}</main>;
+    {showExperience && <ExperienceModal onClose={() => setShowExperience(false)} onSaved={() => { setShowExperience(false); void load(); }} />}
+    {showCvImport && <CvImportModal onClose={() => setShowCvImport(false)} onImported={() => { setShowCvImport(false); void load(); void refresh(); setMessage('Currículo importado. Revise os dados quando quiser.'); }} />}
+    </main>;
+}
+
+function CvImportModal({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<CvPreview | null>(null);
+  const [included, setIncluded] = useState<boolean[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const parse = async () => {
+    if (!file) return;
+    setBusy(true); setError('');
+    const form = new FormData(); form.append('cv', file);
+    try {
+      const result = await api<{ preview: CvPreview }>('/cv/parse', { method: 'POST', body: form });
+      setPreview(result.preview); setIncluded(result.preview.experiences.map(() => true));
+    } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível ler o currículo.'); }
+    finally { setBusy(false); }
+  };
+
+  const apply = async () => {
+    if (!preview) return;
+    setBusy(true); setError('');
+    try {
+      await api('/cv/apply', { method: 'POST', body: JSON.stringify({ ...preview, experiences: preview.experiences.filter((_, index) => included[index]) }) });
+      onImported();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível importar os dados.'); setBusy(false); }
+  };
+
+  return <Modal title={preview ? 'Revise os dados encontrados' : 'Importar currículo'} subtitle={preview ? 'Você decide o que entra no seu perfil antes de salvar.' : 'Envie seu CV e evite preencher tudo manualmente.'} onClose={onClose}>
+    {!preview ? <div className="cv-upload-step">
+      <label className={`dropzone ${file ? 'has-file' : ''}`}>
+        <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" onChange={(event) => setFile(event.target.files?.[0] || null)} />
+        {file ? <><FileText /><b>{file.name}</b><span>{(file.size / 1024 / 1024).toFixed(1)} MB · pronto para analisar</span></> : <><UploadCloud /><b>Escolha seu currículo</b><span>PDF, DOCX ou TXT · máximo de 8 MB</span></>}
+      </label>
+      <div className="info-box"><ShieldCheck /><p>O arquivo é usado apenas para extrair os dados nesta importação. Você revisa tudo antes de salvar.</p></div>
+      {error && <div className="form-error">{error}</div>}
+      <button className="btn btn-primary btn-full" disabled={!file || busy} onClick={() => void parse()}>{busy ? <Loader2 className="spin" /> : <Sparkles />} Ler meu currículo</button>
+    </div> : <div className="cv-review">
+      <div className="form-grid">
+        <label>Nome<input value={preview.name} onChange={(event) => setPreview({ ...preview, name: event.target.value })} /></label>
+        <label>Título profissional<input value={preview.headline} onChange={(event) => setPreview({ ...preview, headline: event.target.value })} /></label>
+        <label className="span-2">Localização<input value={preview.location} onChange={(event) => setPreview({ ...preview, location: event.target.value })} /></label>
+        <label className="span-2">Resumo<textarea rows={4} value={preview.bio} onChange={(event) => setPreview({ ...preview, bio: event.target.value })} /></label>
+        <label className="span-2">Competências encontradas<input value={joinTags(preview.skills)} onChange={(event) => setPreview({ ...preview, skills: splitTags(event.target.value) })} /></label>
+      </div>
+      <div className="cv-experiences"><div><span>EXPERIÊNCIAS ENCONTRADAS</span><b>{included.filter(Boolean).length} selecionadas</b></div>
+        {preview.experiences.length ? preview.experiences.map((experience, index) => <label className="cv-experience" key={`${experience.company}-${index}`}><input type="checkbox" checked={included[index]} onChange={(event) => setIncluded(included.map((value, itemIndex) => itemIndex === index ? event.target.checked : value))} /><span><Check /></span><div><b>{experience.role || 'Cargo não identificado'}</b><small>{experience.company} · {experience.startDate} — {experience.endDate || 'Atual'}</small></div></label>) : <p className="cv-warning">Não encontramos blocos de experiência com datas. Você ainda pode importar o resumo e as competências.</p>}
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <div className="cv-actions"><button className="btn btn-ghost" onClick={() => { setPreview(null); setError(''); }}>Trocar arquivo</button><button className="btn btn-primary" disabled={busy} onClick={() => void apply()}>{busy ? <Loader2 className="spin" /> : <Check />} Confirmar importação</button></div>
+    </div>}
+  </Modal>;
 }
 
 function ExperienceModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
