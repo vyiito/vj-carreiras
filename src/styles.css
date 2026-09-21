@@ -28,6 +28,23 @@ body {
   min-width: 320px;
   min-height: 100vh;
 }
+
+::selection {
+  background: #c8f56d;
+  color: #131a17;
+  -webkit-text-fill-color: #131a17;
+}
+
+::-moz-selection {
+  background: #c8f56d;
+  color: #131a17;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
 button,
 input,
 textarea {
