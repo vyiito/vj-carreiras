@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: vj-carreiras
+    runtime: node
+    plan: free
+    region: ohio
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vj-carreiras-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+
+databases:
+  - name: vj-carreiras-db
+    databaseName: vj_carreiras
+    user: vj_carreiras
+    plan: free
+    region: ohio
+    ipAllowList: []
