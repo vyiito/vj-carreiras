@@ -327,7 +327,10 @@ app.patch('/api/plan/:id', auth, async (req: AuthedRequest, res, next) => {
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }));
 
 app.use(express.static(publicDir));
-app.get('*', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+app.use((req, res, next) => {
+  if (req.method === 'GET' && req.accepts('html')) return res.sendFile(path.join(publicDir, 'index.html'));
+  next();
+});
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   console.error(error);
